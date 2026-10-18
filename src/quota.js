@@ -1,22 +1,36 @@
 /**
- * Enterprise Quota Lifecycle & Storage Management
+ * Enterprise Quota Lifecycle & Atomic Coordination
  * 
- * Supports Cloudflare Workers KV (env.PAYPAL_QUOTAS) with in-memory fallback
- * for zero-config local testing and autonomous unit tests.
+ * Supports both:
+ * 1. QuotaCoordinator Durable Object (Single-threaded, zero-race, atomic consume)
+ * 2. Cloudflare Workers KV (Fast global index, external fallback)
+ * 3. In-memory fallback (Zero-config unit testing and local development)
  * 
  * Key Schemas:
  * - pending:{orderId}   -> Uncaptured order details (TTL: 3 hours)
  * - order:{orderId}     -> Pointer to granted quotaKey (Replay & Double-Spend Defense)
- * - quota:{quotaKey}    -> Active API Quota state (total, remaining, lifecycle)
+ * - quota:{quotaKey}    -> Active API Quota state (mirrored from DO to KV)
  */
 
 import { generateQuotaKey } from './utils.js';
 
-// In-memory fallback for local development or testing without KV bindings
+// In-memory fallback for local development or testing without KV/DO bindings
 const MEMORY_STORAGE = new Map();
 
+function getDOStub(env, quotaKey) {
+  if (!env || !env.QUOTA_DO || typeof env.QUOTA_DO.idFromName !== 'function') {
+    return null;
+  }
+  try {
+    const id = env.QUOTA_DO.idFromName(`quota:${quotaKey}`);
+    return env.QUOTA_DO.get(id);
+  } catch (e) {
+    return null;
+  }
+}
+
 async function kvGet(env, key) {
-  if (env.PAYPAL_QUOTAS) {
+  if (env && env.PAYPAL_QUOTAS) {
     const raw = await env.PAYPAL_QUOTAS.get(key);
     return raw ? JSON.parse(raw) : null;
   }
@@ -26,7 +40,7 @@ async function kvGet(env, key) {
 
 async function kvPut(env, key, value, options = {}) {
   const json = JSON.stringify(value);
-  if (env.PAYPAL_QUOTAS) {
+  if (env && env.PAYPAL_QUOTAS) {
     await env.PAYPAL_QUOTAS.put(key, json, options);
     return;
   }
@@ -34,7 +48,7 @@ async function kvPut(env, key, value, options = {}) {
 }
 
 async function kvDelete(env, key) {
-  if (env.PAYPAL_QUOTAS) {
+  if (env && env.PAYPAL_QUOTAS) {
     await env.PAYPAL_QUOTAS.delete(key);
     return;
   }
@@ -115,11 +129,25 @@ export async function grantQuota(env, orderId, captureId, pendingData) {
     status: 'active'
   };
 
-  // 3. Atomically store quota record and order pointer
+  // 3. Atomically store quota record and order pointer in KV
   await kvPut(env, `quota:${quotaKey}`, quotaRecord);
   await kvPut(env, `order:${orderId}`, quotaKey);
 
-  // 4. Clean up pending order
+  // 4. Seed QuotaCoordinator Durable Object if binding is present
+  const stub = getDOStub(env, quotaKey);
+  if (stub) {
+    try {
+      await stub.fetch('https://do/seed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(quotaRecord)
+      });
+    } catch (doErr) {
+      console.warn('[!] Failed to seed QuotaCoordinator DO on grant:', doErr.message);
+    }
+  }
+
+  // 5. Clean up pending order
   await kvDelete(env, `pending:${orderId}`);
 
   return {
@@ -135,23 +163,65 @@ export async function grantQuota(env, orderId, captureId, pendingData) {
 
 /**
  * Retrieve quota details by quota key
+ * Prefers authoritative Durable Object, falls back to KV on error/missing DO
  */
 export async function getQuota(env, quotaKey) {
   if (!quotaKey || typeof quotaKey !== 'string') return null;
+
+  const stub = getDOStub(env, quotaKey);
+  if (stub) {
+    try {
+      const res = await stub.fetch(`https://do/get?key=${encodeURIComponent(quotaKey)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data) return data;
+      }
+    } catch (e) {
+      console.warn('[!] DO getQuota failed, falling back to KV:', e.message);
+    }
+  }
+
   return await kvGet(env, `quota:${quotaKey}`);
 }
 
 /**
  * Programmatically consume quota units
- * Used by Skuuy API services (read.skuuy.com, etc.) or demo agent
+ * Routed through QuotaCoordinator DO for single-threaded atomic deduction.
+ * Falls back to legacy KV path if DO binding is absent (e.g. unit tests).
  */
 export async function consumeQuota(env, quotaKey, units = 1) {
-  const record = await getQuota(env, quotaKey);
+  if (!quotaKey || typeof quotaKey !== 'string') {
+    return { success: false, error: 'KEY_NOT_FOUND', status: 404 };
+  }
+
+  const stub = getDOStub(env, quotaKey);
+  if (stub) {
+    try {
+      const res = await stub.fetch('https://do/consume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: quotaKey, units })
+      });
+      return await res.json();
+    } catch (e) {
+      console.warn('[!] DO consumeQuota failed, falling back to KV:', e.message);
+    }
+  }
+
+  // Fallback legacy KV path (used in unit tests or when DO binding is absent)
+  return await legacyConsumeQuota(env, quotaKey, units);
+}
+
+/**
+ * Legacy KV Read-Modify-Write consumption (Used as fallback and in offline unit tests)
+ */
+async function legacyConsumeQuota(env, quotaKey, units = 1) {
+  const record = await kvGet(env, `quota:${quotaKey}`);
   if (!record) {
     return { success: false, error: 'KEY_NOT_FOUND', status: 404 };
   }
 
-  if (record.status !== 'active') {
+  if (record.status === 'revoked' || record.status === 'suspended') {
     return { success: false, error: 'KEY_INACTIVE', status: 403 };
   }
 
@@ -164,6 +234,10 @@ export async function consumeQuota(env, quotaKey, units = 1) {
       requested: units,
       total: record.total
     };
+  }
+
+  if (record.status !== 'active') {
+    return { success: false, error: 'KEY_INACTIVE', status: 403 };
   }
 
   // Deduct units

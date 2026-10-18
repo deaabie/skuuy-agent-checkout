@@ -485,3 +485,7 @@ function renderReturnPage(status) {
     }
   });
 }
+
+// Export QuotaCoordinator Durable Object for Cloudflare Workers runtime
+export { QuotaCoordinator } from './quota-do.js';
+

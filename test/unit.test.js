@@ -119,3 +119,66 @@ test('RateLimiter: sliding window enforces limit for POST (30) and GET (60)', as
   }
   assert.equal(allowedGet, 60);
 });
+
+test('QuotaCoordinator DO: atomic serialized consume & zero-overdraft concurrency proof', async () => {
+  const { QuotaCoordinator } = await import('../src/quota-do.js');
+
+  const mockStorage = new Map();
+  const state = {
+    storage: {
+      get: async (k) => mockStorage.get(k),
+      put: async (k, v) => mockStorage.set(k, v)
+    }
+  };
+  const env = {
+    PAYPAL_QUOTAS: {
+      get: async () => null,
+      put: async () => {}
+    }
+  };
+
+  const doInstance = new QuotaCoordinator(state, env);
+  const testKey = 'sq_live_concurrency_test_123';
+
+  // Seed with 10 units
+  await doInstance.fetch(new Request('https://do/seed', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      quotaKey: testKey,
+      api: 'read_url',
+      total: 10,
+      remaining: 10,
+      status: 'active'
+    })
+  }));
+
+  // Fire 10 parallel consume requests
+  const promises = Array.from({ length: 10 }, () =>
+    doInstance.fetch(new Request('https://do/consume', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: testKey, units: 1 })
+    })).then(r => r.json())
+  );
+
+  const results = await Promise.all(promises);
+  assert.equal(results.filter(r => r.success).length, 10);
+
+  // Check state: final remaining must be exactly 0
+  const checkRes = await doInstance.fetch(new Request(`https://do/get?key=${testKey}`));
+  const finalRecord = await checkRes.json();
+  assert.equal(finalRecord.remaining, 0);
+  assert.equal(finalRecord.status, 'depleted');
+
+  // 11th request must be rejected with INSUFFICIENT_QUOTA
+  const overRes = await doInstance.fetch(new Request('https://do/consume', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key: testKey, units: 1 })
+  }));
+  assert.equal(overRes.status, 402);
+  const overData = await overRes.json();
+  assert.equal(overData.error, 'INSUFFICIENT_QUOTA');
+});
+

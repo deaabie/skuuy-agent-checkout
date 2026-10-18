@@ -13,3 +13,13 @@ PUBLIC_BASE_URL = "https://checkout.skuuy.com"
 [[kv_namespaces]]
 binding = "PAYPAL_QUOTAS"
 id = "c646d9de977c4aeea7e30f5ecb42304f"
+
+[durable_objects]
+bindings = [
+  { name = "QUOTA_DO", class_name = "QuotaCoordinator" }
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["QuotaCoordinator"]
+
