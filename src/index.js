@@ -348,7 +348,7 @@ function renderHome(env) {
         <span class="neo-box px-3 py-1 bg-white text-xs font-black uppercase">⚡ PayPal Orders v2</span>
         <span class="neo-box px-3 py-1 bg-[#00F0FF] text-xs font-black uppercase">🔒 Idempotent CAPTURE</span>
         <span class="neo-box px-3 py-1 bg-[#00E676] text-xs font-black uppercase">🌐 Dual-Rail (Fiat + x402)</span>
-        <span class="neo-box px-3 py-1 bg-[#FF007F] text-white text-xs font-black uppercase">🛡️ Enterprise Cloudflare KV</span>
+        <span class="neo-box px-3 py-1 bg-[#FF007F] text-white text-xs font-black uppercase">🛡️ Replay-Protected Capture</span>
       </div>
     </header>
 
