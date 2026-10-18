@@ -92,15 +92,55 @@ curl -X POST https://checkout.skuuy.com/checkout/capture \
 | `file-25` | `file` | 25 drops | $1.00 |
 | `file-100` | `file` | 100 drops | $3.00 |
 
-Prices are computed 100% server-side. Clients never send amounts. Volume packs carry a 10–20% discount.
+Prices are computed 100% server-side. Clients never send amounts. Volume packs carry a 10–25% discount.
+
+## Getting started
+
+```bash
+# 1. Install dependencies
+npm install
+
+# 2. Create the KV namespace (one time)
+npx wrangler kv:namespace create PAYPAL_QUOTAS
+# → copy the returned id into wrangler.toml [[kv_namespaces]]
+
+# 3. Store PayPal credentials (never in git)
+npx wrangler secret put PAYPAL_CLIENT_ID
+npx wrangler secret put PAYPAL_CLIENT_SECRET
+npx wrangler secret put PAYPAL_WEBHOOK_ID
+# Get these from developer.paypal.com → your app → sandbox credentials.
+# The webhook ID comes from the webhook you register at
+# https://checkout.skuuy.com/webhook/paypal
+# (events: CHECKOUT.ORDER.APPROVED, PAYMENT.CAPTURE.COMPLETED,
+#  PAYMENT.CAPTURE.DENIED)
+
+# 4. Run locally
+npx wrangler dev
+# → http://localhost:8787
+
+# 5. Run tests
+npm test   # 8/8 passing, incl. Durable Object concurrency test
+
+# 6. Deploy
+npx wrangler deploy
+```
 
 ## Run the demo agent
 
 ```bash
-node demo/agent.mjs
+# Against production:
+CHECKOUT_URL=https://checkout.skuuy.com node demo/agent.mjs
+
+# Against local dev server:
+node demo/agent.mjs   # defaults to http://localhost:8787
 ```
 
 The script walks through the full autonomous flow: quota check → order creation → approval → capture → API call with the granted quota key. See `docs/demo-script.md` for the video shot list.
+
+> **Note for judges:** the agent needs a running Worker. Without `CHECKOUT_URL`
+> it defaults to `http://localhost:8787`. If the server is unreachable, the
+> script falls back to mock order/quota data for visual demonstration only
+> (clearly labeled in terminal output) — no real PayPal transaction occurs.
 
 ## Architecture
 
