@@ -12,5 +12,4 @@ PUBLIC_BASE_URL = "https://checkout.skuuy.com"
 # npx wrangler kv:namespace create PAYPAL_QUOTAS
 [[kv_namespaces]]
 binding = "PAYPAL_QUOTAS"
-id = "PAYPAL_QUOTAS_ID_PLACEHOLDER"
-preview_id = "PAYPAL_QUOTAS_PREVIEW_PLACEHOLDER"
+id = "c646d9de977c4aeea7e30f5ecb42304f"
