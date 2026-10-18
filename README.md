@@ -1,247 +1,152 @@
 # 🤖 Skuuy Agent Checkout
 
-> **Autonomous AI Agent Quota Commerce on PayPal Fiat Rails**  
-> *Machine-to-machine commerce, zero human checkout friction, instant API quota issuance.*
+**Autonomous AI agent quota commerce on PayPal fiat rails.**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![PayPal Orders v2](https://img.shields.io/badge/PayPal-Orders_v2_REST_API-00457C?logo=paypal)](https://developer.paypal.com/docs/api/orders/v2/)
-[![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers_KV-F38020?logo=cloudflare)](https://workers.cloudflare.com/)
-[![Tests](https://img.shields.io/badge/Tests-100%25_Passing-brightgreen.svg)]()
-[![Hackathon: PayPal AI 2026](https://img.shields.io/badge/PayPal_AI_Hackathon-2026-00F0FF)]()
+An AI agent that buys developer API quota with PayPal — no human checkout, no signup, machine-to-machine commerce. The agent detects it needs API access, creates a PayPal order, authorizes payment through its wallet, captures the payment, and receives a quota key that grants instant API access.
+
+Built for the PayPal AI Hackathon 2026 on Devpost.
 
 ---
 
-## 🎯 1. Concept
-
-**An autonomous AI agent discovers it needs developer API access &rarr; initiates a PayPal order &rarr; authorizes payment via its wallet &rarr; captures the payment &rarr; receives a cryptographic API quota key (`sq_live_...`) &rarr; completes its task.**
-
-Built for the **PayPal AI Hackathon 2026** on Devpost:
-- **Primary Category:** Best Use of Agentic Commerce ($5,000)
-- **Secondary Category:** Best Use of PayPal + AI ($5,000)
-- **Overall:** 1st / 2nd / 3rd Prize Contender
-
-### Why This Wins
-Most hackathon entrants build toy chatbot integrations with PayPal buttons. **Skuuy Agent Checkout** fronts 16 production-hardened developer APIs (`read.skuuy.com`, `file.skuuy.com`, `rpc.skuuy.com`) with an enterprise-grade autonomous machine-to-machine commerce gateway. 
-
-Furthermore, Skuuy pioneers a **Dual-Rail Payment Architecture**:
-1. **Traditional Fiat Rails:** PayPal Orders v2 REST API (this service).
-2. **Crypto Micropayments:** x402 protocol with USDC on Base ($0.001/call).
-
----
-
-## 🏗️ 2. Architecture & Flow
+## How it works
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│                       Autonomous AI Agent                      │
-│        (Node.js / Python / LangChain / AutoGPT / CrewAI)       │
-└───────┬───────────────────────────────┬────────────────────────┘
-        │ 1. GET /catalog               │ 2. POST /checkout/create
-        ▼                               ▼
-┌────────────────────────────────────────────────────────────────┐
-│              Skuuy Agent Checkout Gateway (Worker)             │
-│                                                                │
-│  • Strict Server-Side Pricing (Zero Trust of Client Amounts)   │
-│  • Idempotency via UUID v4 (PayPal-Request-Id)                 │
-│  • Sliding-Window Rate Limiting (IPv6 /64 & IPv4 /32)          │
-└───────┬───────────────────────────────┬────────────────────────┘
-        │ 3. Create Order (v2)          │ 5. Capture Order (v2)
-        ▼                               ▼
-┌────────────────────────────────────────────────────────────────┐
-│                    PayPal REST API (Sandbox)                   │
-│         https://api-m.sandbox.paypal.com/v2/checkout/orders     │
-└───────┬───────────────────────────────┬────────────────────────┘
-        │ 4. Approval URL               │ 6. Status: COMPLETED
-        ▼                               ▼
-┌────────────────────────────────────────────────────────────────┐
-│                 Cloudflare Workers KV Storage                  │
-│                                                                │
-│  • pending:{orderId}  -> TTL 3h (Order in progress)            │
-│  • order:{orderId}    -> Quota Key pointer (Replay defense)    │
-│  • quota:{quotaKey}   -> Active balance (sq_live_<48hex>)      │
-└────────────────────────────────────────────────────────────────┘
+Agent needs API access
+        │
+        ▼
+POST /checkout/create  { api: "read_url", pack: "read-100" }
+        │  → server computes price ($1.00), creates PayPal order
+        ▼
+Agent opens approval URL → wallet authorizes payment
+        │
+        ▼
+POST /checkout/capture  { order_id }
+        │  → PayPal captures $1.00, server issues quota key
+        ▼
+Agent calls API with quota key → 200 + data ✅
 ```
 
----
+One quota system, two payment rails: PayPal (fiat) here, x402/USDC micropayments in production at [skuuy.com](https://skuuy.com).
 
-## 🔒 3. Enterprise Security & Exploit-Free Engineering
+## Live demo
 
-| Security Vector | Implementation Detail |
-|---|---|
-| **Zero-Trust Pricing** | Amounts and quotas are strictly looked up in `src/packs.js`. Client-submitted totals or currencies are never trusted or accepted. |
-| **Idempotency** | Every call to PayPal Orders API generates a UUID v4 `PayPal-Request-Id`. Safe automated retries without duplicate charges. |
-| **Replay & Double-Spend Defense** | Orders store a pointer `order:{orderId} -> quotaKey` in KV upon first capture. Replayed capture requests return the already-granted key without granting extra units. |
-| **Webhook SSRF Protection** | Validates incoming `paypal-cert-url` against a strict whitelist regex (`^https:\/\/(?:api|api-m)\.(?:sandbox\.)?paypal\.com\/`) before making signature verification calls. |
-| **Rate Limiting** | Sliding-window bucket limiter per IP subnet (IPv6 `/64` and IPv4 `/32`) prevents order-spamming. |
-| **Secret Isolation** | `PAYPAL_CLIENT_SECRET` is only ever stored in Cloudflare Worker secrets or local `.dev.vars`—never exposed in responses, client code, or logs. |
+- **API:** https://checkout.skuuy.com
+- **Catalog:** https://checkout.skuuy.com/catalog
+- **Health:** https://checkout.skuuy.com/health
 
----
+## API reference
 
-## 📦 4. Live API Quota Packs
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/` | Landing page + interactive docs |
+| `GET` | `/health` | Service status |
+| `GET` | `/catalog` | Quota packs for agent discovery |
+| `POST` | `/checkout/create` | Create PayPal order → returns `order_id` + `approval_url` |
+| `POST` | `/checkout/capture` | Capture payment → returns `quota_key` |
+| `GET` | `/quota/check?key=` | Inspect quota balance |
+| `POST` | `/quota/consume` | Atomically consume quota on API call |
+| `POST` | `/webhook/paypal` | PayPal webhook (signature-verified) |
 
-Server-side pricing catalog defined in [`src/packs.js`](file:///d:/Skuuy/skuuy-agent-checkout/src/packs.js):
+### Create a checkout
 
-| API Service | Pack ID | Calls / Units | Price (USD) | Description |
-|---|---|---|---|---|
-| `read_url` | `read-100` | 100 calls | $1.00 | URL to clean Markdown reader |
-| `read_url` | `read-500` | 500 calls | $4.50 | 10% volume discount |
-| `rpc` | `rpc-1000` | 1,000 calls | $2.00 | High-throughput Base RPC relay |
-| `rpc` | `rpc-5000` | 5,000 calls | $8.00 | 20% volume discount |
-| `file` | `file-25` | 25 uploads | $1.00 | Ephemeral encrypted file drops |
-| `file` | `file-100` | 100 uploads | $3.00 | 25% volume discount |
-
----
-
-## 🚀 5. API Reference
-
-### 1. Catalog Discovery
-`GET /catalog`
-```bash
-curl https://checkout.skuuy.com/catalog
-```
-Returns list of available API services, pack IDs, unit counts, and USD pricing.
-
----
-
-### 2. Create Order
-`POST /checkout/create`
 ```bash
 curl -X POST https://checkout.skuuy.com/checkout/create \
   -H "Content-Type: application/json" \
-  -d '{"api": "read_url", "pack": "read-100"}'
+  -d '{"api":"read_url","pack":"read-100"}'
 ```
-**Response (200 OK):**
+
 ```json
 {
-  "success": true,
-  "order_id": "8RU12345ABCDE",
-  "approval_url": "https://www.sandbox.paypal.com/checkoutnow?token=8RU12345ABCDE",
-  "api": "read_url",
-  "pack": "read-100",
-  "calls": 100,
+  "order_id": "9E893376W6063194A",
+  "approval_url": "https://www.sandbox.paypal.com/checkoutnow?token=9E893376W6063194A",
   "amount": "1.00",
-  "currency": "USD",
-  "expires_in": 10800
+  "currency": "USD"
 }
 ```
 
----
+### Capture after approval
 
-### 3. Capture Order
-`POST /checkout/capture`
 ```bash
 curl -X POST https://checkout.skuuy.com/checkout/capture \
   -H "Content-Type: application/json" \
-  -d '{"order_id": "8RU12345ABCDE"}'
+  -d '{"order_id":"9E893376W6063194A"}'
 ```
-**Response (200 OK):**
+
 ```json
 {
-  "success": true,
-  "quota_key": "sq_live_b2308a10415d9e8cc7a7e9ef49e017ccbf9874cf1a93b3b2",
+  "quota_key": "sq_live_abc123...",
   "api": "read_url",
   "quota_total": 100,
-  "quota_remaining": 100,
-  "order_id": "8RU12345ABCDE",
-  "capture_id": "3LM94819XYZ",
-  "status": "active"
+  "quota_remaining": 100
 }
 ```
 
----
+## Quota packs
 
-### 4. Quota Check
-`GET /quota/check?key=sq_live_...`
+| Pack | API | Quota | Price (USD) |
+|---|---|---|---|
+| `read-100` | `read_url` | 100 calls | $1.00 |
+| `rpc-1000` | `rpc` | 1,000 calls | $2.00 |
+| `file-25` | `file` | 25 drops | $1.00 |
+
+Prices are computed 100% server-side. Clients never send amounts.
+
+## Run the demo agent
+
 ```bash
-curl "https://checkout.skuuy.com/quota/check?key=sq_live_b2308a10415d9e8cc7a7e9ef49e017ccbf9874cf1a93b3b2"
+node demo/agent.mjs
 ```
 
----
+The script walks through the full autonomous flow: quota check → order creation → approval → capture → API call with the granted quota key. See `docs/demo-script.md` for the video shot list.
 
-### 5. Quota Consume
-`POST /quota/consume`
-```bash
-curl -X POST https://checkout.skuuy.com/quota/consume \
-  -H "Content-Type: application/json" \
-  -d '{"key": "sq_live_b2308a10415d9e8cc7a7e9ef49e017ccbf9874cf1a93b3b2", "units": 1}'
+## Architecture
+
 ```
-**Response (200 OK):**
-```json
-{
-  "success": true,
-  "quota_key": "sq_live_b2308a10415d9e8cc7a7e9ef49e017ccbf9874cf1a93b3b2",
-  "api": "read_url",
-  "consumed": 1,
-  "quota_remaining": 99,
-  "quota_total": 100,
-  "status": "active"
-}
+skuuy-agent-checkout (Cloudflare Worker)
+├── src/index.js    — router, CORS, rate limiting, error boundary
+├── src/paypal.js   — OAuth2 token cache, Orders v2, capture, webhook verification
+├── src/packs.js    — canonical server-side pricing (single source of truth)
+├── src/quota.js    — KV quota lifecycle: grant, check, atomic consume
+└── src/utils.js    — quota key gen, UUID, IP bucketing (/64 IPv6, /32 IPv4)
+
+Storage: Cloudflare KV (PAYPAL_QUOTAS)
+Secrets: PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET (Worker secrets, never in git)
+PayPal: Orders API v2, sandbox environment
 ```
 
----
+### Security
 
-### 6. PayPal Webhook
-`POST /webhook/paypal`
-Listens for asynchronous PayPal events (`PAYMENT.CAPTURE.COMPLETED`). Verifies certificate signatures via PayPal's `/v1/notifications/verify-webhook-signature` API.
+- **Server-side pricing** — amounts come from `src/packs.js`, never from client input.
+- **Idempotency** — `PayPal-Request-Id` (UUID v4) on every order mutation prevents double-charges on retry.
+- **Replay defense** — `order:{orderId} → quotaKey` mapping; re-capturing the same order returns the existing key, never duplicates quota.
+- **Webhook verification** — PayPal certificate URL allowlisted before signature verification; anti-SSRF regex on `paypal-cert-url`.
+- **Rate limiting** — sliding window per IP subnet.
+- **Zero credential leaks** — no secrets in git; `.dev.vars` is gitignored.
 
----
+## Sandbox test accounts
 
-## 💻 6. Quickstart & Local Demo
+| Role | Email |
+|---|---|
+| Seller (Business) | `sb-fl8m753415634@business.example.com` |
+| Buyer (Personal) | `sb-tkaz253435536@personal.example.com` |
 
-### 1. Install & Test
-```bash
-git clone https://github.com/deaabie/skuuy-agent-checkout.git
-cd skuuy-agent-checkout
-npm install
-npm test
+## Project structure
+
+```
+├── src/            # Worker source
+├── demo/           # agent.mjs — interactive demo agent
+├── docs/           # demo-script.md — video pitch script & shot list
+├── test/           # unit tests
+├── wrangler.toml
+└── package.json
 ```
 
-### 2. Run Local Worker
-```bash
-npm run dev
-# Running on http://localhost:8787
-```
+## Tech stack
 
-### 3. Run Autonomous Agent Demo
-In another terminal:
-```bash
-npm run demo
-```
-The terminal script will:
-1. Simulate an autonomous agent detecting lack of API quota.
-2. Query `/catalog` and select `read-100`.
-3. Create PayPal Order via `POST /checkout/create`.
-4. Provide the sandbox Approval URL.
-5. Prompt you to authorize in PayPal Sandbox using test buyer account:
-   - **Buyer:** `sb-tkaz253435536@personal.example.com`
-6. Capture payment via `POST /checkout/capture`.
-7. Issue cryptographic quota key `sq_live_...`.
-8. Consume quota and execute the target read task!
+- Cloudflare Workers + KV
+- PayPal REST APIs (OAuth2, Orders v2) — sandbox
+- Node.js (demo agent)
 
----
+## License
 
-## ☁️ 7. Cloudflare Deployment Setup
-
-### Step 1: Create Cloudflare KV Namespace
-In Cloudflare Dashboard or via Wrangler:
-```bash
-npx wrangler kv:namespace create PAYPAL_QUOTAS
-```
-Copy the returned namespace ID and update `id = "..."` in `wrangler.toml`.
-
-### Step 2: Set PayPal Secrets
-```bash
-npx wrangler secret put PAYPAL_CLIENT_ID
-npx wrangler secret put PAYPAL_CLIENT_SECRET
-npx wrangler secret put PAYPAL_WEBHOOK_ID
-```
-
-### Step 3: Deploy to Cloudflare Workers
-```bash
-npx wrangler deploy
-```
-
----
-
-## 📄 License
-MIT License &copy; 2026 Skuuy Network (Arby & Contributors). Built with pride for the PayPal AI Hackathon.
+MIT
