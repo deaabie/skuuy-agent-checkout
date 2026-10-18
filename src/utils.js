@@ -79,9 +79,9 @@ export function jsonResponse(payload, status = 200, extraHeaders = {}) {
 }
 
 /**
- * Standard Error response builder
+ * Standard Error response builder with optional custom headers (e.g. Retry-After)
  */
-export function errorResponse(message, status = 400, code = 'INVALID_REQUEST', details = null) {
+export function errorResponse(message, status = 400, code = 'INVALID_REQUEST', details = null, extraHeaders = {}) {
   return jsonResponse({
     success: false,
     error: message,
@@ -89,18 +89,21 @@ export function errorResponse(message, status = 400, code = 'INVALID_REQUEST', d
     status,
     timestamp: new Date().toISOString(),
     ...(details ? { details } : {})
-  }, status);
+  }, status, extraHeaders);
 }
 
 /**
- * In-memory sliding window rate limiter
- * Limits requests per IP bucket (e.g., 60 req/min for checkout creation)
+ * Enterprise Sliding Window Rate Limiter
+ * Backed by Cloudflare Workers KV (env.PAYPAL_QUOTAS) across edge nodes
+ * with in-memory fallback for local development.
+ * 
+ * - Mutating POST routes: 30 requests / minute
+ * - Read GET routes: 60 requests / minute
  */
 const RATE_LIMIT_CACHE = new Map();
 const WINDOW_MS = 60 * 1000;
-const MAX_REQUESTS = 60;
 
-export function checkRateLimit(ipBucket) {
+function fallbackMemoryLimit(ipBucket, maxRequests) {
   const now = Date.now();
   const record = RATE_LIMIT_CACHE.get(ipBucket) || { count: 0, resetAt: now + WINDOW_MS };
 
@@ -113,18 +116,44 @@ export function checkRateLimit(ipBucket) {
 
   RATE_LIMIT_CACHE.set(ipBucket, record);
 
-  // Evict old entries if cache grows large
   if (RATE_LIMIT_CACHE.size > 10000) {
     for (const [key, val] of RATE_LIMIT_CACHE.entries()) {
       if (now > val.resetAt) RATE_LIMIT_CACHE.delete(key);
     }
   }
 
-  const remaining = Math.max(0, MAX_REQUESTS - record.count);
+  return record.count;
+}
+
+export async function checkRateLimit(env, ipBucket, isPost = false) {
+  const maxRequests = isPost ? 30 : 60;
+  const currentMinute = Math.floor(Date.now() / 60000);
+  const kvKey = `rl:${ipBucket}:${currentMinute}`;
+
+  let currentCount = 0;
+
+  if (env && env.PAYPAL_QUOTAS) {
+    try {
+      const stored = await env.PAYPAL_QUOTAS.get(kvKey);
+      currentCount = stored ? parseInt(stored, 10) : 0;
+      currentCount += 1;
+      // Expire in 2 minutes (120 seconds)
+      await env.PAYPAL_QUOTAS.put(kvKey, String(currentCount), { expirationTtl: 120 });
+    } catch (e) {
+      currentCount = fallbackMemoryLimit(ipBucket, maxRequests);
+    }
+  } else {
+    currentCount = fallbackMemoryLimit(ipBucket, maxRequests);
+  }
+
+  const allowed = currentCount <= maxRequests;
+  const remaining = Math.max(0, maxRequests - currentCount);
+  const resetInSeconds = 60 - (Math.floor(Date.now() / 1000) % 60);
+
   return {
-    allowed: record.count <= MAX_REQUESTS,
-    limit: MAX_REQUESTS,
+    allowed,
+    limit: maxRequests,
     remaining,
-    resetInSeconds: Math.ceil((record.resetAt - now) / 1000)
+    resetInSeconds
   };
 }

@@ -59,14 +59,22 @@ export default {
         return renderReturnPage(status);
       }
 
-      // 4. Rate Limiting for mutating endpoints
-      if (['POST'].includes(method)) {
-        const rate = checkRateLimit(ipBucket);
+      // 4. Global Rate Limiting (POST: 30 req/min, GET: 60 req/min, excluding /health)
+      if (path !== '/health') {
+        const isPost = method === 'POST';
+        const rate = await checkRateLimit(env, ipBucket, isPost);
         if (!rate.allowed) {
           return errorResponse(
             `Rate limit exceeded. Maximum ${rate.limit} requests per minute. Try again in ${rate.resetInSeconds}s.`,
             429,
-            'RATE_LIMIT_EXCEEDED'
+            'RATE_LIMIT_EXCEEDED',
+            null,
+            {
+              'Retry-After': String(rate.resetInSeconds),
+              'X-RateLimit-Limit': String(rate.limit),
+              'X-RateLimit-Remaining': String(rate.remaining),
+              'X-RateLimit-Reset': String(rate.resetInSeconds)
+            }
           );
         }
       }

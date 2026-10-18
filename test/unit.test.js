@@ -98,12 +98,24 @@ test('Quota: grant, check, and consume lifecycle', async () => {
   assert.equal(overConsume.error, 'INSUFFICIENT_QUOTA');
 });
 
-test('RateLimiter: sliding window enforces limit', () => {
+test('RateLimiter: sliding window enforces limit for POST (30) and GET (60)', async () => {
+  const fakeEnv = {};
   const ip = '10.0.0.1';
-  let allowedCount = 0;
-  for (let i = 0; i < 70; i++) {
-    const res = checkRateLimit(ip);
-    if (res.allowed) allowedCount++;
+  
+  // Test POST limit (30)
+  let allowedPost = 0;
+  for (let i = 0; i < 40; i++) {
+    const res = await checkRateLimit(fakeEnv, ip, true);
+    if (res.allowed) allowedPost++;
   }
-  assert.equal(allowedCount, 60);
+  assert.equal(allowedPost, 30);
+
+  // Test GET limit (60) on different IP
+  const ipGet = '10.0.0.2';
+  let allowedGet = 0;
+  for (let i = 0; i < 70; i++) {
+    const res = await checkRateLimit(fakeEnv, ipGet, false);
+    if (res.allowed) allowedGet++;
+  }
+  assert.equal(allowedGet, 60);
 });
