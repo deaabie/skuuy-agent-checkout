@@ -44,7 +44,7 @@ One quota system, two payment rails: PayPal (fiat) here, x402/USDC micropayments
 | `POST` | `/checkout/create` | Create PayPal order → returns `order_id` + `approval_url` |
 | `POST` | `/checkout/capture` | Capture payment → returns `quota_key` |
 | `GET` | `/quota/check?key=` | Inspect quota balance |
-| `POST` | `/quota/consume` | Atomically consume quota on API call |
+| `POST` | `/quota/consume` | Atomically consume quota on API call (Durable Object, race-free) |
 | `POST` | `/webhook/paypal` | PayPal webhook (signature-verified) |
 
 ### Create a checkout
@@ -57,8 +57,8 @@ curl -X POST https://checkout.skuuy.com/checkout/create \
 
 ```json
 {
-  "order_id": "9E893376W6063194A",
-  "approval_url": "https://www.sandbox.paypal.com/checkoutnow?token=9E893376W6063194A",
+  "order_id": "73770343F32640848",
+  "approval_url": "https://www.sandbox.paypal.com/checkoutnow?token=73770343F32640848",
   "amount": "1.00",
   "currency": "USD"
 }
@@ -69,12 +69,12 @@ curl -X POST https://checkout.skuuy.com/checkout/create \
 ```bash
 curl -X POST https://checkout.skuuy.com/checkout/capture \
   -H "Content-Type: application/json" \
-  -d '{"order_id":"9E893376W6063194A"}'
+  -d '{"order_id":"73770343F32640848"}'
 ```
 
 ```json
 {
-  "quota_key": "sq_live_abc123...",
+  "quota_key": "sq_live_...",
   "api": "read_url",
   "quota_total": 100,
   "quota_remaining": 100
@@ -86,10 +86,13 @@ curl -X POST https://checkout.skuuy.com/checkout/capture \
 | Pack | API | Quota | Price (USD) |
 |---|---|---|---|
 | `read-100` | `read_url` | 100 calls | $1.00 |
+| `read-500` | `read_url` | 500 calls | $4.50 |
 | `rpc-1000` | `rpc` | 1,000 calls | $2.00 |
+| `rpc-5000` | `rpc` | 5,000 calls | $8.00 |
 | `file-25` | `file` | 25 drops | $1.00 |
+| `file-100` | `file` | 100 drops | $3.00 |
 
-Prices are computed 100% server-side. Clients never send amounts.
+Prices are computed 100% server-side. Clients never send amounts. Volume packs carry a 10–20% discount.
 
 ## Run the demo agent
 
@@ -106,21 +109,27 @@ skuuy-agent-checkout (Cloudflare Worker)
 ├── src/index.js    — router, CORS, rate limiting, error boundary
 ├── src/paypal.js   — OAuth2 token cache, Orders v2, capture, webhook verification
 ├── src/packs.js    — canonical server-side pricing (single source of truth)
-├── src/quota.js    — KV quota lifecycle: grant, check, atomic consume
+├── src/quota.js    — quota lifecycle: grant, check, consume (routes through DO)
+├── src/quota-do.js — QuotaCoordinator Durable Object: atomic serialized consume
 └── src/utils.js    — quota key gen, UUID, IP bucketing (/64 IPv6, /32 IPv4)
 
-Storage: Cloudflare KV (PAYPAL_QUOTAS)
-Secrets: PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET (Worker secrets, never in git)
+Storage: Cloudflare KV (PAYPAL_QUOTAS — lookup index) +
+         Durable Object storage (authoritative quota balance, strongly consistent)
+Secrets: PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_WEBHOOK_ID
+         (Worker secrets via `wrangler secret put`, never in git)
 PayPal: Orders API v2, sandbox environment
 ```
 
 ### Security
 
 - **Server-side pricing** — amounts come from `src/packs.js`, never from client input.
+- **Atomic quota consume** — all consumes serialize through the `QuotaCoordinator`
+  Durable Object (single-threaded per key); 10 concurrent consumes decrement
+  exactly 10, never overdraft. Verified live.
 - **Idempotency** — `PayPal-Request-Id` (UUID v4) on every order mutation prevents double-charges on retry.
 - **Replay defense** — `order:{orderId} → quotaKey` mapping; re-capturing the same order returns the existing key, never duplicates quota.
 - **Webhook verification** — PayPal certificate URL allowlisted before signature verification; anti-SSRF regex on `paypal-cert-url`.
-- **Rate limiting** — sliding window per IP subnet.
+- **Rate limiting** — KV-backed sliding window per IP subnet (30 req/min POST, 60 req/min GET).
 - **Zero credential leaks** — no secrets in git; `.dev.vars` is gitignored.
 
 ## Sandbox test accounts
@@ -133,17 +142,17 @@ PayPal: Orders API v2, sandbox environment
 ## Project structure
 
 ```
-├── src/            # Worker source
+├── src/            # Worker source (incl. quota-do.js Durable Object)
 ├── demo/           # agent.mjs — interactive demo agent
 ├── docs/           # demo-script.md — video pitch script & shot list
-├── test/           # unit tests
+├── test/           # unit tests (8/8 passing, incl. concurrency test)
 ├── wrangler.toml
 └── package.json
 ```
 
 ## Tech stack
 
-- Cloudflare Workers + KV
+- Cloudflare Workers + KV + Durable Objects
 - PayPal REST APIs (OAuth2, Orders v2) — sandbox
 - Node.js (demo agent)
 
