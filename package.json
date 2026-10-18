@@ -1,0 +1,26 @@
+{
+  "name": "skuuy-agent-checkout",
+  "version": "1.0.0",
+  "description": "Autonomous AI Agent Checkout with PayPal - Machine-to-Machine Commerce on Fiat Rails",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "demo": "node demo/agent.mjs",
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "paypal",
+    "ai-agent",
+    "agentic-commerce",
+    "autonomous-checkout",
+    "cloudflare-workers",
+    "api-quota"
+  ],
+  "author": "Skuuy Network",
+  "license": "MIT",
+  "devDependencies": {
+    "wrangler": "^4.151.1"
+  }
+}

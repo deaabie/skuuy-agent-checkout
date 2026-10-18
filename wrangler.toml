@@ -1,0 +1,16 @@
+name = "skuuy-agent-checkout"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+PAYPAL_ENV = "sandbox"
+PUBLIC_BASE_URL = "https://checkout.skuuy.com"
+
+# KV namespace for pending orders, idempotency locks & quota keys
+# Replace id with your Cloudflare KV Namespace ID from dashboard or:
+# npx wrangler kv:namespace create PAYPAL_QUOTAS
+[[kv_namespaces]]
+binding = "PAYPAL_QUOTAS"
+id = "PAYPAL_QUOTAS_ID_PLACEHOLDER"
+preview_id = "PAYPAL_QUOTAS_PREVIEW_PLACEHOLDER"
