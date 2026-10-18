@@ -174,10 +174,11 @@ PayPal: Orders API v2, sandbox environment
 
 ## Sandbox test accounts
 
-| Role | Email |
-|---|---|
-| Seller (Business) | `sb-fl8m753415634@business.example.com` |
-| Buyer (Personal) | `sb-tkaz253435536@personal.example.com` |
+Use this personal sandbox buyer account to test the complete end-to-end payment authorization flow on the PayPal sandbox `approval_url`:
+
+| Role | Email | Password |
+|---|---|---|
+| Buyer (Personal) | `sb-tkaz253435536@personal.example.com` | `v>Lr0nf9` |
 
 ## Project structure
 
